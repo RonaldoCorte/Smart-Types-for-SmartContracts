@@ -1,0 +1,17 @@
+Notas:
+- No caso de um if e de duas afetacoes da mesma variavel(indices diferentes de um array), em cubicle faz-se no mesmo case mas em solidity sao duas instrucoes diferentes.
+  Exemplo Bank.cub no metodo transfer. Criar uma instrucao semelhante para minifs?
+  Instrucao nova no fs para facilitar a traducao para o cub aquando de seq de inst no mesmo canal
+  Idealmente esta instrucao nao esta disp para o programador (o comp num dos passos de transformacao gera codigo com esta instrucao quando encontra um determ padrao). ->Future Work
+ 
+- No cubicle quando temos varias afetacoes dentro de um if e preciso ter um canal (array com condicao) para cada afetacao. Checked
+ 
+- Ver o que fazer quando um contrato chama outro contrato. (Falar sobre isto na tese: dificulade; pergunta; resposta; decisao)
+
+- Em fs para aceder aos parametros uso TmVar(param) ou deveria ter uma instrucao semelhante para parametros?
+
+- Em fs usar behavioral types como em solidity (variavel) e depois ir verificando? Ou deveria ter uma estrutura que para cada estado tinha os from e to's e para cada funcao verificar esses bts?
+
+- Como fazer rever em cubicle? ter sempre um estado final revert e passar para esse estado?
+
+- Fazer operacoes entre arrays

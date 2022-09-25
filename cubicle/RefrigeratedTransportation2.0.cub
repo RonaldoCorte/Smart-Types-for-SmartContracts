@@ -1,0 +1,43 @@
+type ref_state = Created | InTransit | OutOfCompliance | Completed 
+var CurrentState : ref_state
+var CurrentCounterParty : proc
+var Owner : proc
+var Device : proc
+var MaxTemp : int
+var MinTemp : int
+array RandomTemps[proc] : int
+var CurrentTemp : int
+
+
+init( i ) { MaxTemp > MinTemp && CurrentState = Created && CurrentTemp > MinTemp && CurrentTemp < MaxTemp}
+
+unsafe( i ) { ( (CurrentTemp > MaxTemp && CurrentState <> OutOfCompliance) || (CurrentTemp < MinTemp && CurrentState <> OutOfCompliance) )   }
+
+
+transition ingest_telemetry(i)
+requires{i = Device && (CurrentState = Created || CurrentState = InTransit) }
+{
+    CurrentState := case
+                        | (RandomTemps[i] > MaxTemp || RandomTemps[i] < MinTemp): OutOfCompliance;
+    CurrentTemp := RandomTemps[i]
+
+}
+
+transition transfer_responsability(i j)
+requires{i = CurrentCounterParty && (CurrentState = Created || CurrentState = InTransit)}
+{
+    CurrentCounterParty := j;
+    CurrentState := case 
+                        | CurrentState = Created : InTransit;
+                        
+}
+
+
+transition complete(i)
+requires{i = Owner && CurrentState = InTransit}
+{
+    CurrentState := Completed;
+}
+
+
+

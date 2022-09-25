@@ -1,0 +1,42 @@
+type bank_state = Initial 
+var Current_State : bank_state
+var Sender : proc
+array Random_Amounts [proc] : int
+array Balances [proc] : int
+var Sender_Balance : int
+var CurrentRandom : int 
+
+init( i ) {Random_Amounts[i] > 0 && Balances[i] >= 0 && CurrentRandom > 0}
+
+unsafe ( i ) { Balances[i] < 0 }
+
+transition deposit(i)
+requires{i = Sender && Random_Amounts[i] > 0}
+{
+    CurrentRandom := Random_Amounts[i];
+    Balances[i] := Balances[i] + CurrentRandom;
+}
+
+transition getBalance(i)
+requires{i = Sender}
+{
+    Sender_Balance := Balances[i];
+}
+
+transition transfer(i j r)
+requires{i = Sender && Balances[i] >= Random_Amounts[r] }
+{
+    CurrentRandom := Random_Amounts[j];
+    Balances[c] := case 
+                        | c = i : Balances[i] - CurrentRandom
+                        | c = j : Balances[j] + CurrentRandom;
+
+}
+
+transition withdraw(i)
+requires{i = Sender && Balances[i] >= CurrentRandom && CurrentRandom > 0}
+{
+    CurrentRandom := Random_Amounts[i];
+    Balances[i] := Balances[i] - CurrentRandom;
+}
+
