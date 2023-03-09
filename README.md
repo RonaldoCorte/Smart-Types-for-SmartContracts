@@ -4,7 +4,7 @@ This repository holds multiple tools for Smart Contracts development and validat
 of Solidity. Then, you can also parse it to the input format of the Model Checker Cubicle and use it to automaticaly verify safety properties about the written Smart Contract.
 
 
-## Metodology
+## Methodology 
 To use this tool, you can start by cloning this repository. In this one you have two folders, cubicle and parser. 
 
 In cubicle folder you have some cubicle examples of use. In parser you can access the main tools of this project.
