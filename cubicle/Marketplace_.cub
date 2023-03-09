@@ -1,0 +1,37 @@
+type marketplace_state = ItemAvailable | OfferPlaced | Accept 
+var MarketplaceState : marketplace_state
+var Owner : proc
+var Buyer : proc
+var Offer : int
+var ItemValue : int
+var IsSold : bool
+var IsOfferMade : bool
+
+array Random_Offers [proc] : int
+
+init( i ) {Random_Offers[i] > 0 && MarketplaceState = ItemAvailable && IsSold = False && IsOfferMade = False}
+
+unsafe (i) {(MarketplaceState = Accept && IsOfferMade = False) }
+
+transition make_offer(i j)
+requires{i = Buyer && MarketplaceState = ItemAvailable && Random_Offers[j] >= ItemValue }
+{
+    Offer := Random_Offers[j];
+    MarketplaceState := OfferPlaced;
+    IsOfferMade := True;
+}
+
+transition accept(i)
+requires{i = Owner && Offer > 0 && IsSold = False && MarketplaceState = OfferPlaced}
+{
+    IsSold := True;
+    MarketplaceState := Accept;
+}
+
+transition reject(i)
+requires{i = Owner && MarketplaceState = OfferPlaced}
+{
+    MarketplaceState := ItemAvailable;
+    IsSold := False;
+}
+

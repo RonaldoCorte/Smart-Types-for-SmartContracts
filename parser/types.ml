@@ -69,7 +69,7 @@ module Gamma = Map.Make (String)
         return_type: typ;
         func_name: string;
         params: params list;
-        body: term; (*adicionar bool requires*)
+        body: term; 
       }
 
     type contract_tc = {
@@ -89,12 +89,14 @@ module Gamma = Map.Make (String)
     | Proc
     | CArr of cub_typ * cub_typ
     | State
+    | String
     | Unit
 
     type cub_values =
     | CBool of bool
     | CCons of int            (* n *)
     | CProc of string      
+    | CString of string
     | CUnit                   (* u *)
     | CMapping of (values * values) list 
     | CState of string

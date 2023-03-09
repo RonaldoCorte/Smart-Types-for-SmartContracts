@@ -1,7 +1,7 @@
 (*
    ocamlopt -c types.ml
-   ocamlopt -c parser.ml
-   ocamlopt -o parser types.cmx parser.cmx
+   ocamlopt -c minicubParser.ml
+   ocamlopt -o parser types.cmx minicubParser.cmx
 *)
 open Types
 module Gamma = Map.Make (String)
@@ -63,7 +63,7 @@ let rec parse_type t  =
   | TUnit -> Unit
   | TAddress -> Proc
   | TMapping(a,b) -> CArr(parse_type a ,parse_type b )
-  | TString -> Proc
+  | TString -> String
   | TState -> State
   | _ -> Proc
 end
@@ -75,7 +75,7 @@ let rec parse_term t gamma cases cubvars extra_exps func_name=
   | TmValue(VFalse) -> C_Value(CBool(false))
   | TmValue(VCons(v)) -> C_Value(CCons(v)) 
   | TmValue(VAddress(x)) -> C_Value(CProc(x)) 
-  | TmValue(VString(s)) -> C_Value(CProc(s)) 
+  | TmValue(VString(s)) -> C_Value(CString(s)) 
   | TmValue(VUnit) -> C_Value(CUnit) 
   | TmValue(VState(a)) -> C_Value(CState(a)) 
   | TmVar(x) -> C_GetVar(x)
@@ -331,7 +331,7 @@ let contractMark : contract_tc = {
   init = ( [], And( Equals(TmVar("CurrentState"), TmGetState("ItemAvailable")), And(Greater( TmVar("AskingPrice"), TmValue(VCons(0))), Greater(TmVar("OfferPrice"), TmVar("AskingPrice")))));
   invariant = ([],Greater(TmVar("OfferPrice"), TmVar("AskingPrice"))); 
   behavioral_types = [TmGetState("ItemAvailable"); TmGetState("OfferPlaced"); TmGetState("Accept")];
-  vars = [(TmVar("CurrentState"),TState); (TmVar("InstanceOwner"), TAddress);(TmVar("Description"), TString); (TmVar("AskingPrice"), TNat);
+  vars = [(TmVar("CurrentState"),TState); (TmVar("InstanceOwner"), TAddress);(TmVar("AskingPrice"), TNat);
           (TmVar("InstanceBuyer"), TAddress); (TmVar("OfferPrice"), TNat)];
   cons = marketplace_constructor;
   funcs = [make_offer; reject; accept];
@@ -461,6 +461,157 @@ let contractBank : contract_tc = {
   funcs = [deposit; get_balance; transfer; withdraw];
 };;
 
-let contractBank_parsed = parse_contract contractBank.name contractBank.vars gammaBank contractBank.funcs contractBank.behavioral_types contractBank.invariant contractBank.init;;
-let contractMark_parsed = parse_contract contractMark.name contractMark.vars gammaMark contractMark.funcs contractMark.behavioral_types contractMark.invariant contractMark.init;;
+(* digital locker *)
+
+              
+let gammaDL = (Gamma.add "sender" TAddress
+(Gamma.add "Owner" TAddress
+(Gamma.add "CurrentState" TState
+(Gamma.add "BankAgent" TAddress
+(Gamma.add "LockerId" TString
+(Gamma.add "CurrentAuthorizedUser" TAddress
+(Gamma.add "Exp_Date" TNat
+(Gamma.add "Image" TString
+(Gamma.add "TPRequestor" TAddress
+(Gamma.add "LockerStatus" TString
+(Gamma.add "param_locker_id" TString
+(Gamma.add "param_image" TString
+(Gamma.add "param_tp" TAddress
+(Gamma.add "param_exp_date" TNat
+(Gamma.add "param_bank_agent" TAddress
+(Gamma.add "Requested" TState
+(Gamma.add "DocumentReview" TState
+(Gamma.add "AvailableToShare" TState
+(Gamma.add "SharingWithTp" TState
+(Gamma.add "SharingRP" TState
+(Gamma.add "Terminated" TState
+(Gamma.add "Pending" TString
+(Gamma.add "Rejected" TString
+(Gamma.add "Shared" TString
+(Gamma.add "Approved" TString
+(Gamma.add "Available" TString
+(Gamma.add "DL" (TContract("DL")) 
+(Gamma.add "aDL" TAddress Gamma.empty))))))))))))))))))))))))))))
+
+let sender : term = TmGetParam("sender")
+let owner : term = TmVar("Owner")
+let currentState : term = TmVar("CurrentState")
+let bank_agent : term = TmVar("BankAgent")
+let lockerId : term = TmVar("LockerId")
+let curentAuthorizedUser : term = TmVar("CurrentAuthorizedUser")
+let exp_Date : term = TmVar("Exp_Date")
+let image : term = TmVar("Image")
+let tpRequestor : term = TmVar("TPRequestor")
+let lockerStatus : term = TmVar("LockerStatus")
+
+
+let param_bank : params = (TAddress,"param_bank_agent")
+let param_bank_val : term = TmGetParam("param_bank_agent")
+let dl_constructor = ([param_bank], TmSeq(TmSeq(TmAssign("Owner", TmGetParam("sender")), TmSeq( TmAssign("CurrentState",TmGetState("Requested")), TmAssign("BankAgent", param_bank_val) )), TmReturn(TmValue(VUnit))))
+                      
+let begin_process_review : func = {requires = And((Equals(owner,sender)),Equals(TmGetState("Requested"),currentState)); return_type = TUnit; func_name = "begin_process_review"; params = []; 
+body =TmSeq( TmSeq( TmAssign("BankAgent", sender),TmSeq(TmAssign("LockerStatus",TmValue(VString("Pending"))),TmAssign("CurrentState", TmGetState("DocumentReview"))) ), TmReturn(TmValue(VUnit))) }
+
+
+let reject_application : func = {requires = And((Equals(bank_agent,sender)),Equals(TmGetState("DocumentReview"),currentState)); return_type = TUnit; func_name = "reject_application"; params = []; 
+body =TmSeq( TmSeq( TmAssign("BankAgent", sender),TmSeq(TmAssign("LockerStatus",TmValue(VString("Rejected"))),TmAssign("CurrentState", TmGetState("DocumentReview"))) ), TmReturn(TmValue(VUnit))) }
+
+
+let param_image : params = (TString,"param_image")
+let param_image_val : term = TmGetParam("param_image")
+let param_locker_id : params = (TString,"param_locker_id")
+let param_locker_id_val : term = TmGetParam("param_locker_id")
+let upload_documents : func = {requires = And((Equals(bank_agent,sender)),Equals(TmGetState("DocumentReview"),currentState)); return_type = TUnit; func_name = "upload_documents"; params = [param_image; param_locker_id]; 
+body =TmSeq( TmSeq( TmAssign("LockerStatus",TmValue(VString("Approved"))),TmSeq(TmAssign("Image", param_image_val) , TmSeq(TmAssign("LockerId", param_locker_id_val) , TmAssign("CurrentState", TmGetState("AvailableToShare"))))), TmReturn(TmValue(VUnit))) }
+
+let param_tp : params = (TAddress,"param_tp")
+let param_tp_val : term = TmGetParam("param_tp")
+let param_exp_date : params = (TNat,"param_exp_date")
+let param_exp_date_val : term = TmGetParam("param_exp_date")
+let share_with_tp : func = {requires = And((Equals(owner,sender)),Equals(TmGetState("AvailableToShare"),currentState)); return_type = TUnit; func_name = "share_with_tp"; params = [param_tp; param_exp_date]; 
+body =TmSeq( TmSeq(TmAssign("TPRequestor", param_tp_val),TmSeq( TmAssign("LockerStatus",TmValue(VString("Shared"))),TmSeq(TmAssign("Exp_Date", param_exp_date_val) , TmSeq(TmAssign("CurrentAuthorizedUser", param_tp_val) , TmAssign("CurrentState", TmGetState("SharingWithTp")))))), TmReturn(TmValue(VUnit))) }
+
+let accept_s_request : func = {requires = And(Equals(owner,sender), Equals(currentState, TmGetState("SharingRP"))); return_type = TUnit; func_name = "accept_s_request"; params = []; 
+body =TmSeq( TmSeq(TmAssign("CurrentAuthorizedUser", tpRequestor),TmAssign("CurrentState", TmGetState("SharingWithTp"))), TmReturn(TmValue(VUnit))) }
+
+let reject_s_request : func = {requires = And(Equals(owner,sender),Equals(currentState, TmGetState("SharingRP"))); return_type = TUnit; func_name = "reject_s_request"; params = []; 
+body =TmSeq( TmSeq(TmAssign("LockerStatus", TmValue(VString("Available"))),TmAssign("CurrentState", TmGetState("SharingWithTp"))), TmReturn(TmValue(VUnit))) }
+
+let request_l_access : func = {requires = And(Not(Equals(owner,sender)),Equals(currentState, TmGetState("SharingRP"))); return_type = TUnit; func_name = "request_l_access"; params = []; 
+body =TmSeq( TmSeq(TmAssign("TPRequestor",sender),TmAssign("CurrentState", TmGetState("SharingRP"))), TmReturn(TmValue(VUnit))) }
+
+let release_l_access : func = {requires = And(Equals(curentAuthorizedUser,sender), Equals(currentState, TmGetState("SharingWithTp"))); return_type = TUnit; func_name = "release_l_access"; params = []; 
+body =TmSeq( TmSeq(TmAssign("LockerStatus",TmValue(VString("Available"))),TmAssign("CurrentState", TmGetState("AvailableToShare"))), TmReturn(TmValue(VUnit))) }
+
+let revoke_access : func = {requires = And(Equals(owner,sender),Equals(currentState, TmGetState("SharingWithTp"))); return_type = TUnit; func_name = "revoke_access"; params = []; 
+body =TmSeq( TmSeq(TmAssign("LockerStatus",TmValue(VString("Available"))),TmAssign("CurrentState", TmGetState("AvailableToShare"))), TmReturn(TmValue(VUnit))) }
+
+
+let terminate : func = {requires = And(And(Not(Equals(currentState, TmGetState("DocumentReview"))),Not(Equals(currentState, TmGetState("Requested")))),Equals(owner,sender)); return_type = TUnit; func_name = "terminate"; params = []; 
+body =TmSeq( TmSeq(TmAssign("LockerStatus",TmValue(VString("Available"))),TmAssign("CurrentState", TmGetState("Terminated"))), TmReturn(TmValue(VUnit))) }
+
+  let contractDL : contract_tc = {
+  name = "DL";
+  init = ([], Equals(TmGetState("Requested"), currentState));
+  invariant = ([],TmValue(VTrue));
+  behavioral_types = [TmGetState("DocumentReview"); TmGetState("Requested"); TmGetState("AvailableToShare");TmGetState("SharingWithTp");TmGetState("SharingRP");TmGetState("Terminated")];
+  vars = [(TmVar("Owner"),TAddress); (TmVar("CurrentState"), TState); (TmVar("BankAgent"), TAddress); (TmVar("LockerId"), TString);
+          (TmVar("CurrentAuthorizedUser"), TAddress); (TmVar("Exp_Date"), TNat); (TmVar("Image"), TString);(TmVar("TPRequestor"), TAddress);(TmVar("LockerStatus"), TString);
+          (TmValue(VString("Pending")), TString); (TmValue(VString("Rejected")), TString); (TmValue(VString("Shared")), TString); (TmValue(VString("Approved")), TString); (TmValue(VString("Available")), TString);];
+  cons = dl_constructor;
+  funcs = [begin_process_review; reject_application; upload_documents;share_with_tp;accept_s_request;reject_s_request;request_l_access;release_l_access;revoke_access;terminate];
+};;
+
+(*let contractBank_parsed = parse_contract contractBank.name contractBank.vars gammaBank contractBank.funcs contractBank.behavioral_types contractBank.invariant contractBank.init;;
 let contractTelemtry_parsed = parse_contract contractTelemetry.name contractTelemetry.vars gammaTelemetry contractTelemetry.funcs contractTelemetry.behavioral_types contractTelemetry.invariant contractTelemetry.init;;
+let contractDL_parsed = parse_contract contractDL.name contractDL.vars gammaDL contractDL.funcs contractDL.behavioral_types contractDL.invariant contractDL.init;;*)
+
+
+
+(*-----------------------------------------------------------------------------MarketplaceUnsafe-----------------------------------------------------------------------------*)
+let instanceOwner : term = TmVar("InstanceOwner");;
+let description : term = TmVar("Description");;
+let askingPrice : term = TmVar("AskingPrice");;
+let instanceBuyer : term = TmVar("InstanceBuyer");;
+let offerPrice : term = TmVar("OfferPrice");;
+let sender : term = TmGetParam("sender");;
+let param_description : params = (TString, "param_description");;
+let param_description_val : term = TmGetParam("param_description");;
+let param_price : params = (TNat,"param_price");;
+let param_price_val : term = TmGetParam("param_price");;
+let marketplace_constructor : construtor_ = ([param_description;param_price], TmSeq(TmSeq(TmAssign("CurrentState", TmGetState("ItemAvailable")) , TmSeq(TmAssign("InstanceOwner",sender), 
+TmSeq(TmAssign("AskingPrice", param_price_val), TmAssign("Description", param_description_val)))), TmReturn(TmValue(VUnit)) ) );;
+
+let param_offer : params = (TNat, "param_offer");;
+let param_offer_val : term = TmGetParam("param_offer");;
+let make_offer : func = {requires = And(Equals(TmGetParam("sender"), TmVar("InstanceBuyer")),And(Equals(TmGetState("ItemAvailable"), TmVar("CurrentState")),
+ Greater(TmGetParam("param_offer"), TmVar("AskingPrice")))); return_type = TUnit; func_name = "make_offer"; params = [param_offer]; 
+                      body = TmSeq( TmSeq( TmIf(Equals(param_offer_val, TmValue(VCons(0))), TmRevert, TmReturn(TmValue(VUnit))),
+                      TmSeq( TmIf(Equals(sender, instanceOwner), TmRevert, TmReturn(TmValue(VUnit))), TmSeq( TmAssign("InstanceBuyer", sender), 
+                      TmSeq( TmAssign("OfferPrice", param_offer_val), TmAssign("CurrentState", TmGetState("OfferPlaced")) ) ))), TmReturn(TmValue(VUnit)))};;
+                
+let param_offer_r : params = (TNat, "param_offer_r");;
+let param_offer_r_val : term = TmGetParam("param_offer");;               
+let reject : func = {requires = And(Equals(TmGetParam("sender"), TmVar("InstanceOwner")),
+                                And(Equals(TmGetState("OfferPlaced"), TmVar("CurrentState")),Not(Equals(param_offer_r_val, TmValue(VCons(0)))))); 
+return_type = TUnit; func_name = "reject"; params = [param_offer_r]; body = TmSeq(TmAssign("InstanceBuyer", TmValue(VAddress("sender"))) , 
+TmSeq( TmAssign("CurrentState", TmGetState("ItemAvailable")),TmReturn(TmValue(VUnit))))   };;
+
+let param_offer_a : params = (TNat, "param_offer_a");;
+let param_offer_a_val : term = TmGetParam("param_offer");;
+let acceptUnsafe : func = { requires = (Equals( sender, instanceOwner));
+                      return_type = TUnit; func_name = "accept"; params = [param_offer_a]; body = TmSeq(TmIf((Equals(param_offer_a_val, TmValue(VCons(0)))), TmRevert, 
+                                                        TmReturn(TmValue(VUnit))), TmSeq(TmAssign("CurrentState", TmGetState("Accept")),TmReturn(TmValue(VUnit))))};;   
+let contractMarkUnsafe : contract_tc = {
+  name = "MarketplaceUnsafe";
+  init = ( [], And( Equals(TmVar("CurrentState"), TmGetState("ItemAvailable")), And(Greater( TmVar("AskingPrice"), TmValue(VCons(0))), Greater(TmVar("OfferPrice"), TmVar("AskingPrice")))));
+  invariant = ([],Greater(TmVar("OfferPrice"), TmVar("AskingPrice"))); 
+  behavioral_types = [TmGetState("ItemAvailable"); TmGetState("OfferPlaced"); TmGetState("Accept")];
+  vars = [(TmVar("CurrentState"),TState); (TmVar("InstanceOwner"), TAddress);(TmVar("Description"), TString); (TmVar("AskingPrice"), TNat);
+          (TmVar("InstanceBuyer"), TAddress); (TmVar("OfferPrice"), TNat)];
+  cons = marketplace_constructor;
+  funcs = [make_offer; reject; acceptUnsafe];
+};;
+
+
+let contractMark_parsed = parse_contract contractMark.name contractMark.vars gammaMark contractMark.funcs contractMark.behavioral_types contractMark.invariant contractMark.init;;

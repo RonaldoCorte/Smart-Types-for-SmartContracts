@@ -5,7 +5,6 @@ var Owner : proc
 var Buyer : proc
 var AskingPrice : int
 var OfferPrice : int
-var Description : int
 array Random_Offers [proc] : int
 
 init( i ) {Random_Offers[i] > 0 && MarketplaceState = ItemAvailable && AskingPrice > 0 }

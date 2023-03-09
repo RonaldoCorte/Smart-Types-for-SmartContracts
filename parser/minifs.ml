@@ -12,6 +12,7 @@ type typ =
   | TMapping of typ * typ 
   | TFun of typ list * typ
   | TString  (*added*)
+  | TState 
 
 type values =
   | VTrue                   (* true *)
@@ -22,12 +23,14 @@ type values =
   | VUnit                   (* u *)
   | VMapping of (values * values) list 
   | VString of string (*added*)
+  | VState of string
 
  
 type term = 
   | TmValue of values          (* v *)     (*hasInCubicle*)
   | TmVar of string            (* x *)     (*hasInCubicle*)
   | TmGetParam of string
+  | TmGetState of string
   | TmBalance of term           (* balance(e) *)
   | TmAddress of term                       (* address(e) *)
   | TmMappSel of term * term     (* e[e] *)  (*hasInCubicle*)
@@ -52,7 +55,6 @@ type term =
   | TmMappAss of term * term * term        (* e[e -> e] *)             (*hasInCubicle*)
   | TmFun of term * string                    (* c.f *)    
   | TmIf of term * term * term              (* if e then e else e *)  (*hasInCubicle*)
-  (*| TmIfSameVar of term * term * term*)
   | TmRevert                                (* revert *)             
   | TmCall of term * string * term * term list (* e1.f.value(e2)(e) *)      
   | TmCallTop of term * string * term * term * term list (* e1.f.value(e2).sender(e3)(e) *)
@@ -61,20 +63,26 @@ type term =
 
   
 type params = typ * string
-type func_ = typ * string * params list * term
+type func_ = typ * string * params list * term * term
 type construtor_ =  params list * term
 
 type func = {
+  requires : term;
   return_type: typ;
-  name: string;
+  func_name: string;
   params: params list;
-  body: term;
+  body: term; (*adicionar bool requires*)
 }
 type contract_tc = {
-  vars: term list;
+  name : string;
+  init : (params list) * term;
+  invariant : (params list) * term;
+  behavioral_types: term list;
+  vars: (term * typ) list;
   cons : construtor_;
   funcs: func list;
-}
+  }
+
 type contract = params list * func list 
 
 (*type params = typ * string
@@ -105,6 +113,7 @@ let rec pp_listparams f c fmt = function
 let rec pp_typ fmt = function
   | TBool -> Format.fprintf fmt "bool"
   | TNat -> Format.fprintf fmt "uint"
+  | TState -> Format.fprintf fmt "state"
   | TUnit -> Format.fprintf fmt "unit"
   | TAddress -> Format.fprintf fmt "address"
   | TString -> Format.fprintf fmt "string"
@@ -121,6 +130,7 @@ let rec pp_mappings f c fmt = function
 let rec pp_val fmt = function
   | VTrue -> Format.fprintf fmt "true"
   | VFalse -> Format.fprintf fmt "false"
+  | VState(s) -> Format.fprintf fmt "%s" s
   | VString(s) -> Format.fprintf fmt "%s" s
   | VCons(v) -> Format.fprintf fmt "%d" v
   | VAddress(v) -> Format.fprintf fmt "%s" v
@@ -168,6 +178,8 @@ let rec pp_term fmt = function
   | LessOrEquals(e1, e2) -> Format.fprintf fmt "%a <= %a" pp_term e1 pp_term e2
   | GreaterOrEquals(e1, e2) -> Format.fprintf fmt "%a >= %a" pp_term e1 pp_term e2
   | TmGetParam(p) -> Format.fprintf fmt "param %s" p
+  | TmGetState(p) -> Format.fprintf fmt "state  %s" p
+
 
 
 
@@ -225,14 +237,16 @@ let rec typecheck whites gamma ct ty t =
       | TmValue(VTrue) -> Format.eprintf "(TRUE) @."; Format.eprintf "%a @." pp_typ TBool ; TBool 
       | TmValue(VFalse) -> Format.eprintf "(FALSE) @."; Format.eprintf "%a @." pp_typ TBool ; TBool
       | TmValue(VCons(v)) -> Format.eprintf "(NAT) @."; Format.eprintf "%a @." pp_typ TNat ; TNat
+      | TmValue(VState(v)) -> Format.eprintf "(STATE) @."; Format.eprintf "%a @." pp_typ TState ; TState
       | TmValue(VAddress(x)) -> Format.eprintf "(ADDRESS) @."; Format.eprintf "%a @." pp_typ TAddress ; compType TAddress (get_type gamma x) 
       | TmValue(VContract(x)) -> Format.eprintf "(REF) @.";
       let ctype = get_type gamma x in Format.eprintf "%a @." pp_typ ctype ;
       compType (TContract(getContractName(ctype))) ctype 
       | TmValue(VString(s)) -> Format.eprintf "(STRING) @."; Format.eprintf "%a @." pp_typ TString ; TString
       | TmValue(VUnit) -> Format.eprintf "(UNIT) @."; Format.eprintf "%a @." pp_typ TUnit ; TUnit  
-      | TmVar(x) -> Format.eprintf "(NAT) @."; let t = get_type gamma x in Format.eprintf "%a @." pp_typ t ; t
-      | TmGetParam(x) -> Format.eprintf "(NAT) @."; let t = get_type gamma x in Format.eprintf "%a @." pp_typ t ; t
+      | TmVar(x) -> Format.eprintf "(Var) @."; let t = get_type gamma x in Format.eprintf "%a @." pp_typ t ; t
+      | TmGetParam(x) -> Format.eprintf "(Param) @."; let t = get_type gamma x in Format.eprintf "%a @." pp_typ t ; t
+      | TmGetState(x) -> Format.eprintf "(State) @."; let t = get_type gamma x in Format.eprintf "%a @." pp_typ t ; t
       | TmRevert -> Format.eprintf "(REVERT) @."; Format.eprintf "%a @." pp_typ TUnit; TUnit
       | And(t1, t2) | Or(t1,t2) -> Format.eprintf "(Bool cond) @."; 
       let te1 = typecheck (whites + 2) gamma ct (Some TBool) t1 in 
@@ -270,12 +284,12 @@ let rec typecheck whites gamma ct ty t =
       let te = typecheck (whites + 2) gamma ct None e in
       Format.eprintf "%a @." pp_typ te ;
       let tx = typecheck (whites + 2) gamma ct None (x) in 
-      if te == tx then te else compType te tx; TBool
+      if te == tx then te else compType te tx
       | Greater(x, e) | Less(x, e) | GreaterOrEquals(x, e) | LessOrEquals(x, e) -> Format.eprintf "(Cond ) @.";
       let te = typecheck (whites + 2) gamma ct (Some TNat) e in
       Format.eprintf "%a @." pp_typ te ;
       let tx = typecheck (whites + 2) gamma ct (Some TNat) x in 
-      if te == tx then te else compType te tx; TBool
+      if te == tx then te else compType te tx
       |TmPlus(x, y) | TmMinus(x,y) | TmMult(x,y) | TmDiv(x,y)-> Format.eprintf "(Arit) @.";
       let te = typecheck (whites + 2) gamma ct (Some TNat) x in
       Format.eprintf "%a @." pp_typ te ;
@@ -354,16 +368,18 @@ let rec typecheck whites gamma ct ty t =
     begin match t with 
       | TmValue(VTrue) -> Format.eprintf "(TRUE) @."; compType TBool ty 
       | TmValue(VFalse) -> Format.eprintf "(FALSE) @."; compType TBool ty           
-      | TmValue(VCons(v)) -> Format.eprintf "(NAT) @."; compType TNat ty   
+      | TmValue(VCons(v)) -> Format.eprintf "(NAT) @."; compType TNat ty  
+      | TmValue(VState(v)) -> Format.eprintf "(STATE) @."; compType TState ty    
       | TmValue(VString(s)) -> Format.eprintf "(String) @."; compType TString ty               
       | TmValue(VAddress(x)) -> Format.eprintf "(ADDRESS) @."; ignore(compType TAddress ty); compType (get_type gamma x) TAddress 
       | TmValue(VContract(x)) -> Format.eprintf "(REF) @."; ignore(compType (get_type gamma x) ty) ; compType (TContract(getContractName(get_type gamma x))) ty
       | TmValue(VUnit) -> Format.eprintf "(UNIT) @."; compType TUnit ty 
       | TmVar(x) -> Format.eprintf "(VAR) @.";compType (get_type gamma x) ty
       | TmGetParam(x) -> Format.eprintf "(PARAM) @.";compType (get_type gamma x) ty
+      | TmGetState(x) -> Format.eprintf "(STATE) @.";ignore(compType (get_type gamma x) ty); compType TState ty
       | TmRevert -> Format.eprintf "(REVERT) @."; compType ty ty
       | TmBalance(t) -> Format.eprintf "(BAL) @.";ignore(typecheck (whites + 2) gamma ct (Some TAddress) t) ; compType TNat ty
-      | TmPlus(x,y) | TmMinus(x,y) | TmMult(x,y) | TmDiv(x,y)-> Format.eprintf "(Op Arit) @."; ignore(typecheck (whites + 2) gamma ct (Some TNat) x) ; typecheck (whites + 2) gamma ct (Some TNat) y ; compType TNat ty
+      | TmPlus(x,y) | TmMinus(x,y) | TmMult(x,y) | TmDiv(x,y)-> Format.eprintf "(Op Arit) @."; ignore(typecheck (whites + 2) gamma ct (Some TNat) x) ; ignore(typecheck (whites + 2) gamma ct (Some TNat) y); compType TNat ty
       | TmAddress(t) -> Format.eprintf "(ADDR) @."; 
         begin match t with 
         | TmValue(VContract(c)) -> ignore(typecheck (whites + 2) gamma ct (Some (TContract(getContractName(get_type gamma c)))) t); compType TAddress ty
@@ -375,7 +391,7 @@ let rec typecheck whites gamma ct ty t =
        typecheck (whites + 2) gamma ct (Some ty) t3 
       | Equals(t1, t2) -> Format.eprintf "(Equals op) @."; 
         ignore(typecheck (whites + 2) gamma ct None (Equals(t1,t2))); compType TBool ty;
-      | Greater(t1, t2) | Less(t1,t2) | LessOrEquals(t1,t2) | GreaterOrEquals(t1,t2) -> Format.eprintf "(Equals) @."; 
+      | Greater(t1, t2) | Less(t1,t2) | LessOrEquals(t1,t2) | GreaterOrEquals(t1,t2) -> Format.eprintf "(Bool Cond) @."; 
         ignore(typecheck (whites + 2) gamma ct None (Greater(t1,t2))); compType TBool ty;
       | And(t1, t2) | Or(t1,t2) -> Format.eprintf "(Bool cond) @."; 
         let te1 = typecheck (whites + 2) gamma ct (Some TBool) t1 in 
@@ -385,7 +401,7 @@ let rec typecheck whites gamma ct ty t =
         else if te1 == te2 then typecheck (whites + 2) gamma ct (Some TBool) (TmValue(VTrue)) else compType TBool te1     
       | Not(t1)-> Format.eprintf "(Not) @."; 
         let te1 = typecheck (whites + 2) gamma ct (Some TBool) t1 in 
-        if( te1 != TBool) then compType TBool te1 else typecheck (whites + 2) gamma ct (Some TBool) (TmValue(VTrue))
+        if( te1 != TBool) then compType TBool te1 else compType TBool ty
       | TmAssign(x, e) ->Format.eprintf "(ASS) @."; ignore(typecheck (whites + 2) gamma ct (Some ty) (TmVar(x))) ; typecheck (whites + 2) gamma ct (Some ty) e 
       | TmValue(VMapping(l)) -> Format.eprintf "(MAPPING) @.";
         begin match ty with
@@ -452,10 +468,10 @@ let rec typecheck whites gamma ct ty t =
 
 let rec typecheck_command whites gamma ct typ = function
   | Eval t -> Format.open_box 2 ; ignore(typecheck (whites + 2) gamma ct typ t) ; Format.close_box ()
-  | CSeq(s1, s2) as c -> match typ with
-                         | Some typ -> Format.eprintf "%a , %a |- %a : %a @." pp_contract ct pp_gamma gamma pp_cmd c pp_typ typ;
+  | CSeq(s1, s2) (*as c*) -> match typ with
+                         | Some typ -> (*Format.eprintf "%a , %a |- %a : %a @." pp_contract ct pp_gamma gamma pp_cmd c pp_typ typ;*)
                          typecheck_command (whites + 2) gamma ct None s1; typecheck_command (whites + 2) gamma ct (Some typ) s2 
-                         | None -> Format.eprintf "%a , %a |- %a : None @." pp_contract ct pp_gamma gamma pp_cmd c; 
+                         | None -> (*Format.eprintf "%a , %a |- %a : None @." pp_contract ct pp_gamma gamma pp_cmd c; *)
                          typecheck_command (whites + 2) gamma ct None s1; typecheck_command (whites + 2) gamma ct None s2  
 
 let mk_eval t = Eval t
@@ -466,19 +482,30 @@ let mk_seq s1 s2 = CSeq(s1, s2)
 let test_func gamma ct t1 term = 
   try typecheck_command 0 gamma ct t1 term ; Format.eprintf "Success@."
   with TypMismatch (typ1, typ2) -> Format.eprintf "type mismatch : termected type %a but got type %a @." pp_typ typ1 pp_typ typ2 
-  | InvalidTerm(t1, t2) -> Format.eprintf "term mismatch : termected %a but got %a@." pp_term t1 pp_term t2
+  | InvalidTerm(t1, t2) -> Format.eprintf "term mismatch : termected %a but got %a@." pp_term t1 pp_term t2;;
 
 
 let rec do_all ct gamma lst = 
   match lst with
   | [] -> ()
-  | x :: xs -> test_func gamma ct (Some x.return_type) (mk_eval x.body); do_all ct gamma xs
+  | x :: xs -> 
+               test_func gamma ct (Some TBool) (mk_eval x.requires); 
+               test_func gamma ct (Some x.return_type) (mk_eval x.body); 
+               do_all ct gamma xs;;
 
 let typecheck_contract ct gamma contract = 
+  let (_,init) = contract.init in
+  let (_,invariant) = contract.invariant in
+  test_func gamma ct (Some TBool) (mk_eval init);
+  test_func gamma ct (Some TBool) (mk_eval invariant);
   let (_,cons_body) = contract.cons in
   test_func gamma ct (Some TUnit) (mk_eval cons_body);
-  do_all ct gamma contract.funcs 
+  do_all ct gamma (contract.funcs) ;;
 
+
+  let gammaenv = (Gamma.add "x" (TString) Gamma.empty);;
+  let operation = TmPlus(TmVar("x"), TmMult( TmValue(VCons(3)) , TmValue(VCons(3))));;
+(*  test_func gammaenv CT.empty (Some TNat) (mk_eval operation)*)
 
 (*let ttrue = TmValue(VTrue)
 let tfalse = TmValue(VFalse)
@@ -730,42 +757,38 @@ let () = *)
 
 (*-----------------------------------------------------------------------------Examples-------------------------------------------------------------------------------*)
 (* Bank *)
-let sender : term = TmVar("sender") 
-let msg_value : term = TmVar("msg_value")
-let balances = TmVar("balances")
+let sender : term = TmGetParam("sender");;
+let msg_value : term = TmVar("Msg_value");;
+let balances = TmVar("Balances");;
 
-let param_balances : params = (TMapping(TAddress, TNat), "balances_param")
-let param_balances_val : term = (TmGetParam("balances_param"))
-let bank_constructor : construtor_ = ([param_balances],TmSeq(TmAssign("balances", param_balances_val), TmReturn(TmValue(VUnit)) ))
+let param_balances : params = (TMapping(TAddress, TNat), "balances_param");;
+let param_balances_val : term = (TmGetParam("balances_param"));;
+let bank_constructor : construtor_ = ([param_balances],TmSeq(TmAssign("Balances", param_balances_val), TmReturn(TmValue(VUnit)) ));;
 
-let deposit : func = { return_type = TUnit; name = "deposit"; params = []; body = TmSeq( TmMappAss(balances, sender, TmPlus( TmMappSel(balances, sender), msg_value)), TmReturn(TmValue(VUnit)))  }
+let deposit : func = { requires = TmValue(VTrue); return_type = TUnit; func_name = "deposit"; params = []; body = TmSeq( TmMappAss(balances, sender, TmPlus( TmMappSel(balances, sender), msg_value)), TmReturn(TmValue(VUnit)))  };;
 
-let get_balance : func = { return_type = TNat; name = "get_balance"; params = []; body = TmReturn( TmMappSel(balances, sender) )  }
+let get_balance : func = { requires = TmValue(VTrue); return_type = TNat; func_name = "get_balance"; params = []; body = TmReturn( TmMappSel(balances, sender) )  };;
 
-let param_to : params = (TAddress, "to")
-let param_to_val : term = TmGetParam("to")
-let param_amount :params = (TNat, "amount")
-let param_amount_val : term = TmGetParam("amount")
-let transfer : func = {return_type = TUnit; name = "transfer"; params = [param_to; param_amount]; body = TmSeq( TmIf( GreaterOrEquals(TmMappSel(balances, sender), param_amount_val), 
+let param_to : params = (TAddress, "to");;
+let param_to_val : term = TmGetParam("to");;
+let param_amount :params = (TNat, "amount");;
+let param_amount_val : term = TmGetParam("amount");;
+let transfer : func = {requires = TmValue(VTrue); return_type = TUnit; func_name = "transfer"; params = [param_to; param_amount];
+body = TmSeq( TmIf( GreaterOrEquals(TmMappSel(balances, sender), param_amount_val), 
 TmSeq( TmMappAss(balances, sender, TmMinus( TmMappSel(balances, sender),param_amount_val)),
 TmSeq(TmMappAss(balances, param_to_val, TmPlus( TmMappSel(balances, param_to_val),param_amount_val)),TmReturn(TmValue(VUnit)))), 
-TmReturn(TmValue(VUnit))), TmReturn(TmValue(VUnit))) }
+TmReturn(TmValue(VUnit))), TmReturn(TmValue(VUnit))) };;
 
-let param_withdraw_amount : params = (TNat, "W_amount") 
-let param_withdraw_amount_val : term = TmGetParam("W_amount") 
-let withdraw : func = {return_type = TUnit; name = "withdraw"; params = [param_withdraw_amount]; body =TmSeq( TmIf( GreaterOrEquals(TmMappSel(balances, sender), param_withdraw_amount_val), 
+let param_withdraw_amount : params = (TNat, "W_amount");;
+let param_withdraw_amount_val : term = TmGetParam("W_amount");;
+let withdraw : func = {requires = TmValue(VTrue); return_type = TUnit; func_name = "withdraw"; params = [param_withdraw_amount]; body =TmSeq( TmIf( GreaterOrEquals(TmMappSel(balances, sender), param_withdraw_amount_val), 
 TmSeq(TmMappAss(balances, sender, TmMinus( TmMappSel(balances, sender),param_withdraw_amount_val)),
       TmTransfer( sender,param_withdraw_amount_val ) ), 
-      TmReturn(TmValue(VUnit))), TmReturn(TmValue(VUnit))) }
+      TmReturn(TmValue(VUnit))), TmReturn(TmValue(VUnit))) };;
 
-let ctBank = (CT.add "Bank" ( (
-             [(TAddress,"Sender"); (TNat,"MsgValue");(TNat,"Balances")], 
-             bank_constructor,
-             [ deposit; get_balance; transfer; withdraw]) ) )
 (* test bank*)
 let ctBank =
-  (CT.add "Bank" ([((TAddress), "sender");
-                        ((TNat), "msg_value"); (TMapping(TAddress, TNat), "balances");
+  (CT.add "Bank" ([((TNat), "Msg_value"); (TMapping(TAddress, TNat), "Balances");
                         (TMapping(TAddress, TNat), "balances_param");
                         ((TNat), "amount"); ((TAddress), "to");
                         ((TNat), "W_amount");
@@ -777,180 +800,192 @@ let ctBank =
                   (TUnit, "withdraw",[((TNat), "W_amount")]);
                   (TNat, "deposit", []);
                   (TNat, "get_balance", []);
-                  ]) CT.empty)
+                  ]) CT.empty);;
               
-let gammaBank = (Gamma.add "sender" TAddress
-      (Gamma.add "msg_value" TNat
-      (Gamma.add "balances" (TMapping(TAddress, TNat))
+let gammaBank = 
+      (Gamma.add "Msg_value" TNat
+      (Gamma.add "param_init" TAddress
+      (Gamma.add "param_unsafe" TAddress
+      (Gamma.add "Balances" (TMapping(TAddress, TNat))
       (Gamma.add "balances_param" (TMapping(TAddress, TNat))
-      (Gamma.add "InstanceBuyer" TAddress
       (Gamma.add "amount" TNat
       (Gamma.add "to" TAddress
+      (Gamma.add "sender" TAddress
       (Gamma.add "W_amount" TNat
-      (Gamma.add "param_price" TNat
-      (Gamma.add "param_offer" TNat
       (Gamma.add "Bank" (TContract("Bank")) 
-      (Gamma.add "aBank" TAddress Gamma.empty))))))))))))  
+      (Gamma.add "aBank" TAddress Gamma.empty)))))))))));;
 
-(*let constructor_body = TmSeq(TmAssign("balances", param_balances_val), TmReturn(TmValue(VUnit)) )
-test_func gammaBank ctBank (Some TUnit) (mk_eval constructor_body)
-
-let deposit_body =  TmSeq( TmMappAss(balances, sender, TmPlus( TmMappSel(balances, sender), msg_value)), TmReturn(TmValue(VUnit)))  
-test_func gammaBank ctBank (Some TUnit) (mk_eval deposit_body)
-
-let getBalance_body =  TmReturn( TmMappSel(balances, sender) )  
-test_func gammaBank ctBank (Some TNat) (mk_eval getBalance_body)
-
-let transfer_body =  TmSeq( TmIf( GreaterOrEquals(TmMappSel(balances, sender), param_amount_val), 
-TmSeq( TmMappAss(balances, sender, TmMinus( TmMappSel(balances, sender),param_amount_val)),
-TmSeq(TmMappAss(balances, param_to_val, TmPlus( TmMappSel(balances, param_to_val),param_amount_val)),TmReturn(TmValue(VUnit)))), 
-TmReturn(TmValue(VUnit))), TmReturn(TmValue(VUnit)))
-test_func gammaBank ctBank (Some TUnit) (mk_eval transfer_body)
+let contractBank : contract_tc = {
+  name = "Bank";
+  init = ( [((TAddress,"param_init"))] ,GreaterOrEquals(TmMappSel(TmVar("Balances"), TmGetParam("param_init") ), TmValue(VCons(0))));
+  invariant = ([(TAddress, "param_unsafe")],Less(TmMappSel(TmVar("Balances"), TmGetParam("param_unsafe") ), TmValue(VCons(0))));
+  behavioral_types = [];
+  vars = [(TmVar("Msg_value"), TNat);(TmVar("Balances"), TMapping(TAddress,TNat))];
+  cons = bank_constructor;
+  funcs = [deposit; get_balance; transfer; withdraw]
+};;
 
 
-let withdraw_body =  TmSeq( TmIf( GreaterOrEquals(TmMappSel(balances, sender), param_withdraw_amount_val), 
-TmSeq(TmMappAss(balances, sender, TmMinus( TmMappSel(balances, sender),param_withdraw_amount_val)),
-      TmTransfer( sender,param_withdraw_amount_val ) ), 
-      TmReturn(TmValue(VUnit))), TmReturn(TmValue(VUnit))) 
+
+let contractBank : contract_tc = {
+  name = "Bank";
+  init = ( [((TAddress,"param_init"))] ,GreaterOrEquals(TmMappSel(TmVar("Balances"), TmGetParam("param_init") ), TmValue(VCons(0))));
+  invariant = ([(TAddress, "param_unsafe")],Less(TmMappSel(TmVar("Balances"), TmGetParam("param_unsafe") ), TmValue(VCons(0))));
+  behavioral_types = [];
+  vars = [(TmVar("Msg_value"), TNat);(TmVar("Balances"), TMapping(TAddress,TNat))];
+  cons = bank_constructor;
+  funcs = [deposit; get_balance; transfer; withdraw]
+};;
       
-test_func gammaBank ctBank (Some TUnit) (mk_eval withdraw_body)
-*)
-
 (* Marketplace-azure *)
 
-let instanceOwner : term = TmVar("InstanceOwner")
-let description : term = TmVar("Description")
-let askingPrice : term = TmVar("AskingPrice")
-let instanceBuyer : term = TmVar("InstanceBuyer")
-let offerPrice : term = TmVar("OfferPrice")
-let sender : term = TmVar("sender")
-
-let param_description : params = (TString, "param_description")
-let param_description_val : term = TmGetParam("param_description")
-let param_price : params = (TNat,"param_price")
-let param_price_val : term = TmGetParam("param_price")
-let marketplace_constructor : construtor_ = ([param_description;param_price], TmSeq(TmSeq( TmAssign("InstanceOwner",sender), TmSeq(TmAssign("AskingPrice", param_price_val), TmAssign("Description", param_description_val))), TmReturn(TmValue(VUnit)) ) )
-
-let param_offer : params = (TNat, "param_offer")
-let param_offer_val : term = TmGetParam("param_offer")
-let make_offer : func = {return_type = TUnit; name = "make_offer"; params = [param_offer]; 
-                      body = TmSeq( TmSeq( TmIf(Equals(param_offer_val, TmValue(VCons(0))), TmRevert, TmReturn(TmValue(VUnit))),TmSeq( TmIf(Equals(sender, instanceOwner), TmRevert, TmReturn(TmValue(VUnit))), TmSeq( TmAssign("InstanceBuyer", sender), TmAssign("OfferPrice", param_offer_val) ) )), TmReturn(TmValue(VUnit)))}
-                
-
-let param_offer_r : params = (TNat, "param_offer_r")
-let param_offer_r_val : term = TmGetParam("param_offer")                      
-let reject : func = {return_type = TUnit; name = "reject"; params = [param_offer_r]; body = TmSeq(TmSeq( TmIf(Not(Equals(param_offer_r_val, TmValue(VCons(0)))), TmRevert, TmReturn(TmValue(VUnit))), TmAssign("InstanceBuyer", TmValue(VAddress("sender"))) ), TmReturn(TmValue(VUnit)) )  }
-
-
-let param_offer_a : params = (TNat, "param_offer_a")
-let param_offer_a_val : term = TmGetParam("param_offer")    
-let accept : func = {return_type = TUnit; name = "accept"; params = [param_offer_a]; body = TmSeq(TmIf(Not(Equals(param_offer_a_val, TmValue(VCons(0)))), 
-                                                        TmRevert, 
-                                                        TmReturn(TmValue(VUnit))), TmReturn(TmValue(VUnit)))}
-                                                    
-
-
-
-(*test marketplace
-let constructor_body =  TmSeq(TmSeq( TmAssign("InstanceOwner",sender), TmSeq(TmAssign("AskingPrice", param_price_val), TmAssign("Description", param_description_val))), TmReturn(TmValue(VUnit)) )
-test_func gammaMark ctMark (Some TUnit) (mk_eval constructor_body);;
-
-let make_offer_body = TmSeq( TmSeq( TmIf(Equals(param_offer_val, TmValue(VCons(0))), TmRevert, TmReturn(TmValue(VUnit))),TmSeq( TmIf(Equals(sender, instanceOwner), TmRevert, TmReturn(TmValue(VUnit))), TmSeq( TmAssign("InstanceBuyer", sender), TmAssign("OfferPrice", param_offer_val) ) )), TmReturn(TmValue(VUnit)))
-test_func gammaMark ctMark (Some TUnit) (mk_eval make_offer_body);;
-
-let accept_offer_body =TmSeq(TmIf(Not(Equals(param_offer_a_val, TmValue(VCons(0)))), 
-TmRevert, 
-TmReturn(TmValue(VUnit))), TmReturn(TmValue(VUnit)))
-test_func gammaMark ctMark (Some TUnit) (mk_eval accept_offer_body);;
-
-let reject_offer_body =  TmSeq(TmSeq( TmIf(Not(Equals(param_offer_r_val, TmValue(VCons(0)))), TmRevert, TmReturn(TmValue(VUnit))), TmAssign("InstanceBuyer", TmValue(VAddress("sender"))) ), TmReturn(TmValue(VUnit)) ) 
-test_func gammaMark ctMark (Some TUnit) (mk_eval reject_offer_body);;
-*)
 let ctMark =
-    (CT.add "Marketplace" ([((TAddress), "InstanceOwner");((TString), "Description");
-                          ((TNat), "AskingPrice"); ((TAddress), "InstanceBuyer");
-                          ((TNat), "OfferPrice"); ((TAddress), "sender");
-                          ((TString), "param_description");((TNat), "param_price");
-                          ((TNat), "param_offer")],
-                    [(TUnit, "marketplace_constructor",[((TString), "param_description"); ((TAddress), "OfferPrice")]); 
-                    (TUnit, "make_offer",[(TNat), "param_offer"]);
-                    (TNat, "accept", []);
-                    (TUnit, "reject", []);
-                    ]) CT.empty)
-                
-let gammaMark = (Gamma.add "InstanceOwner" TAddress
-        (Gamma.add "Description" TString
-        (Gamma.add "AskingPrice" TNat
-        (Gamma.add "InstanceBuyer" TAddress
-        (Gamma.add "OfferPrice" TNat
-        (Gamma.add "sender" TAddress
-        (Gamma.add "param_description" TString
-        (Gamma.add "param_price" TNat
-        (Gamma.add "param_offer" TNat
-        (Gamma.add "Mark" (TContract("Mark")) 
-        (Gamma.add "aMark" TAddress Gamma.empty)))))))))))                         
-                                                         
-(* Telemetry-azure *)
-let sender : term = TmVar("Sender")
-let owner : term = TmVar("Owner")
-let counterParty : term = TmVar("CounterParty")
-let device : term = TmVar("Device")
-let complianceStatus : term = TmVar("ComplianceStatus")
-let max_temp : term = TmVar("Max_Temperature")
-let min_temp : term = TmVar("Min_Temperature")
+  (CT.add "Marketplace" ([((TAddress), "InstanceOwner");((TString), "Description");
+                        ((TNat), "AskingPrice"); ((TAddress), "InstanceBuyer");
+                        ((TNat), "OfferPrice");
+                        ((TString), "param_description");((TNat), "param_price");
+                        ((TNat), "param_offer")],
+                  [(TUnit, "marketplace_constructor",[((TString), "param_description"); ((TAddress), "OfferPrice")]); 
+                  (TUnit, "make_offer",[(TNat), "param_offer"]);
+                  (TNat, "accept", []);
+                  (TUnit, "reject", []);
+                  ]) CT.empty);;
 
-let param_device : params = (TAddress,"param_device")
-let param_device_val : term = TmGetParam("param_device")
-let param_max_temp : params = (TAddress,"param_max_temp")
-let param_max_temp_val : term = TmGetParam("param_max_temp")
-let param_min_temp : params = (TAddress,"param_min_temp")
-let param_min_temp_val : term = TmGetParam("param_min_temp")
+let gammaMark = (Gamma.add "InstanceOwner" TAddress
+(Gamma.add "CurrentState" TState
+(Gamma.add "ItemAvailable" TState
+(Gamma.add "OfferPlaced" TState
+(Gamma.add "Accept" TState
+(Gamma.add "Description" TString
+(Gamma.add "AskingPrice" TNat
+(Gamma.add "InstanceBuyer" TAddress
+(Gamma.add "OfferPrice" TNat
+(Gamma.add "sender" TAddress
+(Gamma.add "param_description" TString
+(Gamma.add "param_price" TNat
+(Gamma.add "param_offer" TNat
+(Gamma.add "Mark" (TContract("Mark")) 
+(Gamma.add "aMark" TAddress Gamma.empty)))))))))))))));;
+
+(*-----------------------------------------------------------------------------MARKETPLACE-----------------------------------------------------------------------------*)
+let instanceOwner : term = TmVar("InstanceOwner");;
+let description : term = TmVar("Description");;
+let askingPrice : term = TmVar("AskingPrice");;
+let instanceBuyer : term = TmVar("InstanceBuyer");;
+let offerPrice : term = TmVar("OfferPrice");;
+let sender : term = TmGetParam("sender");;
+let param_description : params = (TString, "param_description");;
+let param_description_val : term = TmGetParam("param_description");;
+let param_price : params = (TNat,"param_price");;
+let param_price_val : term = TmGetParam("param_price");;
+let marketplace_constructor : construtor_ = ([param_description;param_price], TmSeq(TmSeq(TmAssign("CurrentState", TmGetState("ItemAvailable")) , TmSeq(TmAssign("InstanceOwner",sender), 
+TmSeq(TmAssign("AskingPrice", param_price_val), TmAssign("Description", param_description_val)))), TmReturn(TmValue(VUnit)) ) );;
+
+let param_offer : params = (TNat, "param_offer");;
+let param_offer_val : term = TmGetParam("param_offer");;
+let make_offer : func = {requires = And(Equals(TmGetParam("sender"), TmVar("InstanceBuyer")),And(Equals(TmGetState("ItemAvailable"), TmVar("CurrentState")),
+ Greater(TmGetParam("param_offer"), TmVar("AskingPrice")))); return_type = TUnit; func_name = "make_offer"; params = [param_offer]; 
+                      body = TmSeq( TmSeq( TmIf(Equals(param_offer_val, TmValue(VCons(0))), TmRevert, TmReturn(TmValue(VUnit))),
+                      TmSeq( TmIf(Equals(sender, instanceOwner), TmRevert, TmReturn(TmValue(VUnit))), TmSeq( TmAssign("InstanceBuyer", sender), 
+                      TmSeq( TmAssign("OfferPrice", param_offer_val), TmAssign("CurrentState", TmGetState("OfferPlaced")) ) ))), TmReturn(TmValue(VUnit)))};;
+                
+let param_offer_r : params = (TNat, "param_offer_r");;
+let param_offer_r_val : term = TmGetParam("param_offer");;                      
+let reject : func = {requires = And(Equals(TmGetParam("sender"), TmVar("InstanceOwner")),
+                                And(Equals(TmGetState("OfferPlaced"), TmVar("CurrentState")),Not(Equals(param_offer_r_val, TmValue(VCons(0)))))); 
+return_type = TUnit; func_name = "reject"; params = [param_offer_r]; body = TmSeq(TmAssign("InstanceBuyer", TmValue(VAddress("sender"))) , 
+TmSeq( TmAssign("CurrentState", TmGetState("ItemAvailable")),TmReturn(TmValue(VUnit))))   };;
+
+let param_offer_a : params = (TNat, "param_offer_a");;
+let param_offer_a_val : term = TmGetParam("param_offer");;   
+let accept : func = { requires = And(Equals(TmGetState("OfferPlaced"), TmVar("CurrentState")),(Equals( sender, instanceOwner)));
+                      return_type = TUnit; func_name = "accept"; params = [param_offer_a]; body = TmSeq(TmIf((Equals(param_offer_a_val, TmValue(VCons(0)))), TmRevert, 
+                                                        TmReturn(TmValue(VUnit))), TmSeq(TmAssign("CurrentState", TmGetState("Accept")),TmReturn(TmValue(VUnit))))};;  
+let contractMark : contract_tc = {
+  name = "Marketplace";
+  init = ( [], And( Equals(TmVar("CurrentState"), TmGetState("ItemAvailable")), And(Greater( TmVar("AskingPrice"), TmValue(VCons(0))), Greater(TmVar("OfferPrice"), TmVar("AskingPrice")))));
+  invariant = ([],Greater(TmVar("OfferPrice"), TmVar("AskingPrice"))); 
+  behavioral_types = [TmGetState("ItemAvailable"); TmGetState("OfferPlaced"); TmGetState("Accept")];
+  vars = [(TmVar("CurrentState"),TState); (TmVar("InstanceOwner"), TAddress);(TmVar("Description"), TString); (TmVar("AskingPrice"), TNat);
+          (TmVar("InstanceBuyer"), TAddress); (TmVar("OfferPrice"), TNat)];
+  cons = marketplace_constructor;
+  funcs = [make_offer; reject; accept]
+};;
+                
+
+(* Telemetry-azure *)
+let sender : term = TmGetParam("sender");;
+let owner : term = TmVar("Owner");;
+let counterParty : term = TmVar("CounterParty");;
+let device : term = TmVar("Device");;
+let complianceStatus : term = TmVar("ComplianceStatus");;
+let max_temp : term = TmVar("Max_Temperature");;
+let min_temp : term = TmVar("Min_Temperature");;
+
+let param_device : params = (TAddress,"param_device");;
+let param_device_val : term = TmGetParam("param_device");;
+let param_max_temp : params = (TAddress,"param_max_temp");;
+let param_max_temp_val : term = TmGetParam("param_max_temp");;
+let param_min_temp : params = (TAddress,"param_min_temp");;
+let param_min_temp_val : term = TmGetParam("param_min_temp");;
 let telemetry_constructor = ([param_device;param_max_temp; param_min_temp],
                             TmSeq(TmSeq( TmAssign("ComplianceStatus",TmValue(VTrue)) , TmSeq( TmAssign("CounterParty", sender), 
                             TmSeq(TmAssign("Owner", sender) , TmSeq(TmAssign("Device", param_device_val) , 
-                            TmSeq(TmAssign("Max_Temperature", param_max_temp_val ) , TmAssign("Min_Temperature", param_min_temp_val )))) ) ), TmReturn(TmValue(VUnit)) ) )  
+                            TmSeq(TmAssign("Max_Temperature", param_max_temp_val ) , TmAssign("Min_Temperature", param_min_temp_val )))) ) ), TmReturn(TmValue(VUnit)) ) );;  
  
-let param_temp : params = (TNat, "param_temp")     
-let param_temp_val : term = TmGetParam("param_temp")                           
-let ingest_telemetry : func = {return_type = TUnit; name = "ingest_telemetry"; params = [param_temp]; body = TmSeq( TmSeq(TmIf( Not(Equals(sender, device)), TmRevert, TmReturn(TmValue(VUnit))), 
-TmSeq(TmSeq(TmIf( Or( Greater(param_temp_val, max_temp), Less(param_temp_val, min_temp)),TmSeq(TmAssign("ComplianceStatus",TmValue(VFalse)),TmReturn(TmValue(VUnit))),TmReturn(TmValue(VUnit))), TmReturn(TmValue(VUnit))) ,TmReturn(TmValue(VUnit)))), TmReturn(TmValue(VUnit)))  }
+let param_temp : params = (TNat, "param_temp");;     
+let param_temp_val : term = TmGetParam("param_temp");;                           
+let ingest_telemetry : func = {requires = And( Equals(TmGetParam("sender"), TmVar("Device")),Or( Equals(TmVar("CurrentState"), TmGetState("Created")), Equals(TmVar("CurrentState"), TmGetState("InTransit")) )); return_type = TUnit; func_name = "ingest_telemetry"; params = [param_temp]; 
+body = TmSeq( TmSeq(TmIf( Or( Greater(param_temp_val, max_temp) , Less( param_temp_val, min_temp)), TmAssign("ComplianceStatus", TmValue(VFalse)) , TmAssign("ComplianceStatus", TmValue(VTrue))),
+ TmSeq(TmIf( Not(Equals(sender, device)), TmRevert, TmReturn(TmValue(VUnit))), TmIf( Or( Greater(param_temp_val, max_temp), Less(param_temp_val, min_temp)),
+ TmAssign("ComplianceStatus",TmValue(VFalse)),TmReturn(TmValue(VUnit))))),TmReturn(TmValue(VUnit)))  };;
 
-let param_new_counter_party : params = (TAddress, "param_new_counter_party")   
-let param_new_counter_party_val : term = TmGetParam("param_new_counter_party")                         
-let transfer_responsability : func = {return_type = TUnit; name = "transfer_responsability"; params = [param_new_counter_party]; 
-                              body = TmSeq( TmSeq( TmIf( And(Not(Equals(sender,param_new_counter_party_val )),Not(Equals(sender,counterParty))), TmRevert ,TmReturn(TmValue(VUnit))),
-                                     TmSeq(TmIf(Equals(param_new_counter_party_val,device), TmRevert, TmReturn(TmValue(VUnit))),TmAssign("CounterParty", param_new_counter_party_val) ) ) , TmReturn(TmValue(VUnit))) }
 
-let complete : func = { return_type = TUnit; name = "complete"; params = []; body = TmSeq( TmSeq( TmIf( Not(Equals(sender,owner )), TmRevert ,TmReturn(TmValue(VUnit))), 
-                      TmAssign("CounterParty", TmValue(VString("0x000000000")))  ), TmReturn(TmValue(VUnit)) ) } 
-                      
-          
-(*let ctTelemetry =  (CT.add "Telemetry" ( (
-  [(TAddress,"Sender"); (TNat,"MsgValue");(TAddress,"Owner");(TAddress,"InitialCounterParty"); (TAddress,"CounterParty"); (TAddress,"PreviousParty"); (TAddress,"Device");
-  (TAddress,"SupplyChainObserver");(TAddress,"SupplyChainOwner");(TNat,"Max_Temperature");(TNat,"Min_Temperature");], 
-  telemetry_constructor,
-  [ ingest_telemetry; transfer_responsability; complete]) ) ) *)
+let param_new_counter_party : params = (TAddress, "param_new_counter_party");;
+let param_new_counter_party_val : term = TmGetParam("param_new_counter_party");;                         
+let transfer_responsability : func = {requires = And( Equals(TmGetParam("sender"), TmVar("CounterParty")) ,Or( Equals(TmVar("CurrentState"), TmGetState("Created")), Equals(TmVar("CurrentState"), TmGetState("InTransit")))); return_type = TUnit; func_name = "transfer_responsability"; params = [param_new_counter_party]; 
+                              body = TmSeq(
+                                          TmIf( Equals(TmVar("CurrentState"), TmGetState("Created")), TmAssign("CurrentState", TmGetState("InTransit")) , TmAssign("CurrentState", TmGetState("Created"))),                               
+                                          TmSeq( 
+                                            TmSeq( TmIf( And(Not(Equals(sender,param_new_counter_party_val )),Not(Equals(sender,counterParty))), TmRevert ,TmReturn(TmValue(VUnit))),
+                                            TmSeq(TmIf(Equals(param_new_counter_party_val,device), TmRevert, TmReturn(TmValue(VUnit))),TmAssign("CounterParty", param_new_counter_party_val) ) ) , TmReturn(TmValue(VUnit)))) };;
+
+let complete : func = {requires =  (Equals(sender,owner )); return_type = TUnit; func_name = "complete"; params = []; body = TmSeq( TmAssign("CurrentState", TmGetState("Completed")) ,TmReturn(TmValue(VUnit)) ) };;
   
-(* test telemetry 
-let constructor_body = TmSeq(TmSeq( TmAssign("ComplianceStatus",TmValue(VTrue)) , TmSeq( TmAssign("CounterParty", sender), 
-TmSeq(TmAssign("Owner", sender) , TmSeq(TmAssign("Device", param_device_val) , 
-TmSeq(TmAssign("Max_Temperature", param_max_temp_val ) , TmAssign("Min_Temperature", param_min_temp_val )))) ) ), TmReturn(TmValue(VUnit)) )
-test_func gammaTelemetry ctTelemetry (Some TUnit) (mk_eval constructor_body);;
+                 
+let gammaTelemetry = (Gamma.add "sender" TAddress
+(Gamma.add "Owner" TAddress
+(Gamma.add "CurrentState" TState
+(Gamma.add "CounterParty" TAddress
+(Gamma.add "param_device" TAddress
+(Gamma.add "ComplianceStatus" TBool
+(Gamma.add "Max_Temperature" TNat
+(Gamma.add "Min_Temperature" TNat
+(Gamma.add "Device" TAddress
+(Gamma.add "param_max_temp" TNat
+(Gamma.add "param_min_temp" TNat
+(Gamma.add "param_temp" TNat
+(Gamma.add "Created" TState
+(Gamma.add "InTransit" TState
+(Gamma.add "OutOfCompliance" TState
+(Gamma.add "Completed" TState
+(Gamma.add "param_new_counter_party" TAddress
+(Gamma.add "Telemetry" (TContract("Telemetry")) 
+(Gamma.add "aTelemetry" TAddress Gamma.empty)))))))))))))))))));;
 
-let ingest_telemetry_body =  TmSeq( TmSeq(TmIf( Not(Equals(sender, device)), TmRevert, TmReturn(TmValue(VUnit))), 
-TmSeq(TmSeq(TmIf( Or( Greater(param_temp_val, max_temp), Less(param_temp_val, min_temp)),TmSeq(TmAssign("ComplianceStatus",TmValue(VFalse)),TmReturn(TmValue(VUnit))),TmReturn(TmValue(VUnit))), TmReturn(TmValue(VUnit))) ,TmReturn(TmValue(VUnit)))), TmReturn(TmValue(VUnit))) 
-test_func gammaTelemetry ctTelemetry (Some TUnit) (mk_eval ingest_telemetry_body);;
-
-let transfer_body = TmSeq( TmSeq( TmIf( And(Not(Equals(sender,param_new_counter_party_val )),Not(Equals(sender,counterParty))), TmRevert ,TmReturn(TmValue(VUnit))),
-                                     TmSeq(TmIf(Equals(param_new_counter_party_val,device), TmRevert, TmReturn(TmValue(VUnit))),TmAssign("CounterParty", param_new_counter_party_val) ) ) , TmReturn(TmValue(VUnit))) 
-test_func gammaTelemetry ctTelemetry (Some TUnit) (mk_eval transfer_body);;
-
-let complete_body = TmSeq( TmSeq( TmIf( Not(Equals(sender,owner )), TmRevert ,TmReturn(TmValue(VUnit))), 
-TmAssign("CounterParty", TmValue(VAddress("0x000000000")))  ), TmReturn(TmValue(VUnit)) ) 
-test_func gammaTelemetry ctTelemetry (Some TUnit) (mk_eval complete_body);;
-*)
+let contractTelemetry : contract_tc = {
+  name = "Telemetry";
+  init = ([],And(Greater(TmVar("Max_Temperature"), TmVar("Min_Temperature")),And(Greater(TmVar("Min_Temperature"), TmValue(VCons(0))), And( Equals(TmVar("ComplianceStatus"), TmValue(VTrue)), Equals(TmVar("CurrentState"),TmGetState("Created"))))));
+  invariant = ([],Greater(TmVar("Max_Temperature"), TmVar("Min_Temperature")));
+  behavioral_types = [TmGetState("Created"); TmGetState("InTransit"); TmGetState("OutOfCompliance");TmGetState("Completed")];
+  vars = [(TmVar("Owner"),TAddress); (TmVar("CurrentState"), TState); (TmVar("CounterParty"), TAddress); (TmVar("Device"), TAddress);
+          (TmVar("ComplianceStatus"), TBool); (TmVar("Max_Temperature"), TNat); (TmVar("Min_Temperature"), TNat)];
+  cons = telemetry_constructor;
+  funcs = [ingest_telemetry; transfer_responsability; complete]
+};;
+          
 let ctTelemetry =
-  (CT.add "Telemetry" ([((TAddress), "Sender");((TAddress), "Owner");
+  (CT.add "Telemetry" ([((TAddress), "Owner");
                         ((TAddress), "CounterParty"); ((TAddress), "param_device");
                         ((TBool), "ComplianceStatus"); ((TNat), "Max_Temperature");
                         ((TNat), "Min_Temperature");((TAddress), "Device");
@@ -960,33 +995,213 @@ let ctTelemetry =
                   (TUnit, "ingest_telemetry",[((TNat), "param_temp")]);
                   (TNat, "transfer_responsability", [((TAddress), "param_new_counter_party")]);
                   (TUnit, "complete", [])
-                  ]) CT.empty)
+                  ]) CT.empty);;
+
+
+(* digital locker *)
+
               
-let gammaTelemetry = (Gamma.add "Sender" TAddress
-      (Gamma.add "Owner" TAddress
-      (Gamma.add "AskingPrice" TNat
-      (Gamma.add "CounterParty" TAddress
-      (Gamma.add "param_device" TAddress
-      (Gamma.add "ComplianceStatus" TBool
-      (Gamma.add "Max_Temperature" TNat
-      (Gamma.add "Min_Temperature" TNat
-      (Gamma.add "Device" TAddress
-      (Gamma.add "param_max_temp" TNat
-      (Gamma.add "param_min_temp" TNat
-      (Gamma.add "param_temp" TNat
-      (Gamma.add "0x000000000" TAddress
-      (Gamma.add "param_new_counter_party" TAddress
-      (Gamma.add "Telemetry" (TContract("Telemetry")) 
-      (Gamma.add "aTelemetry" TAddress Gamma.empty))))))))))))))))   
+let gammaDL = (Gamma.add "sender" TAddress
+(Gamma.add "Owner" TAddress
+(Gamma.add "CurrentState" TState
+(Gamma.add "BankAgent" TAddress
+(Gamma.add "LockerId" TString
+(Gamma.add "CurrentAuthorizedUser" TAddress
+(Gamma.add "Exp_Date" TNat
+(Gamma.add "Image" TString
+(Gamma.add "TPRequestor" TAddress
+(Gamma.add "LockerStatus" TString
+(Gamma.add "param_locker_id" TString
+(Gamma.add "param_image" TString
+(Gamma.add "param_tp" TAddress
+(Gamma.add "param_exp_date" TNat
+(Gamma.add "param_bank_agent" TAddress
+(Gamma.add "Requested" TState
+(Gamma.add "DocumentReview" TState
+(Gamma.add "AvailableToShare" TState
+(Gamma.add "SharingWithTp" TState
+(Gamma.add "SharingRP" TState
+(Gamma.add "Terminated" TState
+(Gamma.add "Pending" TString
+(Gamma.add "Rejected" TString
+(Gamma.add "Shared" TString
+(Gamma.add "Approved" TString
+(Gamma.add "Available" TString
+(Gamma.add "DL" (TContract("DL")) 
+(Gamma.add "aDL" TAddress Gamma.empty))))))))))))))))))))))))))));;
+
+let sender : term = TmGetParam("sender");;
+let owner : term = TmVar("Owner");;
+let currentState : term = TmVar("CurrentState");;
+let bank_agent : term = TmVar("BankAgent");;
+let lockerId : term = TmVar("LockerId");;
+let curentAuthorizedUser : term = TmVar("CurrentAuthorizedUser");;
+let exp_Date : term = TmVar("Exp_Date");;
+let image : term = TmVar("Image");;
+let tpRequestor : term = TmVar("TPRequestor");;
+let lockerStatus : term = TmVar("LockerStatus");;
 
 
+let param_bank : params = (TAddress,"param_bank_agent");;
+let param_bank_val : term = TmGetParam("param_bank_agent");;
+let dl_constructor = ([param_bank], TmSeq(TmSeq(TmAssign("Owner", TmGetParam("sender")), TmSeq( TmAssign("CurrentState",TmGetState("Requested")), TmAssign("BankAgent", param_bank_val) )), TmReturn(TmValue(VUnit))));;
+                      
+let begin_process_review : func = {requires = And((Equals(owner,sender)),Equals(TmGetState("Requested"),currentState)); return_type = TUnit; func_name = "begin_process_review"; params = []; 
+body =TmSeq( TmSeq( TmAssign("BankAgent", sender),TmSeq(TmAssign("LockerStatus",TmValue(VString("Pending"))),TmAssign("CurrentState", TmGetState("DocumentReview"))) ), TmReturn(TmValue(VUnit))) };;
+
+
+let reject_application : func = {requires = And((Equals(bank_agent,sender)),Equals(TmGetState("DocumentReview"),currentState)); return_type = TUnit; func_name = "reject_application"; params = []; 
+body =TmSeq( TmSeq( TmAssign("BankAgent", sender),TmSeq(TmAssign("LockerStatus",TmValue(VString("Rejected"))),TmAssign("CurrentState", TmGetState("DocumentReview"))) ), TmReturn(TmValue(VUnit))) };;
+
+let param_image : params = (TString,"param_image");;
+let param_image_val : term = TmGetParam("param_image");;
+let param_locker_id : params = (TString,"param_locker_id");;
+let param_locker_id_val : term = TmGetParam("param_locker_id");;
+let upload_documents : func = {requires = And((Equals(bank_agent,sender)),Equals(TmGetState("DocumentReview"),currentState)); return_type = TUnit; func_name = "upload_documents"; params = [param_image; param_locker_id]; 
+body =TmSeq( TmSeq( TmAssign("LockerStatus",TmValue(VString("Approved"))),TmSeq(TmAssign("Image", param_image_val) , TmSeq(TmAssign("LockerId", param_locker_id_val) , TmAssign("CurrentState", TmGetState("AvailableToShare"))))), TmReturn(TmValue(VUnit))) };;
+
+let param_tp : params = (TAddress,"param_tp");;
+let param_tp_val : term = TmGetParam("param_tp");;
+let param_exp_date : params = (TNat,"param_exp_date");;
+let param_exp_date_val : term = TmGetParam("param_exp_date");;
+let share_with_tp : func = {requires = And((Equals(owner,sender)),Equals(TmGetState("AvailableToShare"),currentState)); return_type = TUnit; func_name = "share_with_tp"; params = [param_tp; param_exp_date]; 
+body =TmSeq( TmSeq(TmAssign("TPRequestor", param_tp_val),TmSeq( TmAssign("LockerStatus",TmValue(VString("Shared"))),TmSeq(TmAssign("Exp_Date", param_exp_date_val) , TmSeq(TmAssign("CurrentAuthorizedUser", param_tp_val) , TmAssign("CurrentState", TmGetState("SharingWithTp")))))), TmReturn(TmValue(VUnit))) };;
+
+let accept_s_request : func = {requires = And(Equals(owner,sender), Equals(currentState, TmGetState("SharingRP"))); return_type = TUnit; func_name = "accept_s_request"; params = []; 
+body =TmSeq( TmSeq(TmAssign("CurrentAuthorizedUser", tpRequestor),TmAssign("CurrentState", TmGetState("SharingWithTp"))), TmReturn(TmValue(VUnit))) };;
+
+let reject_s_request : func = {requires = And(Equals(owner,sender),Equals(currentState, TmGetState("SharingRP"))); return_type = TUnit; func_name = "reject_s_request"; params = []; 
+body =TmSeq( TmSeq(TmAssign("LockerStatus", TmValue(VString("Available"))),TmAssign("CurrentState", TmGetState("SharingWithTp"))), TmReturn(TmValue(VUnit))) };;
+
+let request_l_access : func = {requires = And(Not(Equals(owner,sender)),Equals(currentState, TmGetState("SharingRP"))); return_type = TUnit; func_name = "request_l_access"; params = []; 
+body =TmSeq( TmSeq(TmAssign("TPRequestor",sender),TmAssign("CurrentState", TmGetState("SharingRP"))), TmReturn(TmValue(VUnit))) };;
+
+let release_l_access : func = {requires = And(Equals(curentAuthorizedUser,sender), Equals(currentState, TmGetState("SharingWithTp"))); return_type = TUnit; func_name = "release_l_access"; params = []; 
+body =TmSeq( TmSeq(TmAssign("LockerStatus",TmValue(VString("Available"))),TmAssign("CurrentState", TmGetState("AvailableToShare"))), TmReturn(TmValue(VUnit))) };;
+
+let revoke_access : func = {requires = And(Equals(owner,sender),Equals(currentState, TmGetState("SharingWithTp"))); return_type = TUnit; func_name = "revoke_access"; params = []; 
+body =TmSeq( TmSeq(TmAssign("LockerStatus",TmValue(VString("Available"))),TmAssign("CurrentState", TmGetState("AvailableToShare"))), TmReturn(TmValue(VUnit))) };;
+
+
+let terminate : func = {requires = And(And(Not(Equals(currentState, TmGetState("DocumentReview"))),Not(Equals(currentState, TmGetState("Requested")))),Equals(owner,sender)); return_type = TUnit; func_name = "terminate"; params = []; 
+body =TmSeq( TmSeq(TmAssign("LockerStatus",TmValue(VString("Available"))),TmAssign("CurrentState", TmGetState("Terminated"))), TmReturn(TmValue(VUnit))) };;
+
+
+
+
+  let contractDL : contract_tc = {
+  name = "DL";
+  init = ([], Equals(TmGetState("Requested"), currentState));
+  invariant = ([],TmValue(VTrue));
+  behavioral_types = [TmGetState("DocumentReview"); TmGetState("Requested"); TmGetState("AvailableToShare");TmGetState("SharingWithTp");TmGetState("SharingRP");TmGetState("Terminated")];
+  vars = [(TmVar("Owner"),TAddress); (TmVar("CurrentState"), TState); (TmVar("BankAgent"), TAddress); (TmVar("LockerId"), TString);
+          (TmVar("CurrentAuthorizedUser"), TAddress); (TmVar("Exp_Date"), TNat); (TmVar("Image"), TString);(TmVar("TPRequestor"), TAddress);(TmVar("LockerStatus"), TString)];
+  cons = dl_constructor;
+  funcs = [begin_process_review; reject_application; upload_documents;share_with_tp;accept_s_request;reject_s_request;request_l_access;release_l_access;revoke_access;terminate];
+};;
+
+     
+let ctDL =
+  (CT.add "DL" ([((TAddress), "Owner");
+                        ((TState), "CurrentState"); ((TAddress), "BankAgent");
+                        ((TString), "LockerId"); ((TAddress), "CurrentAuthorizedUser");
+                        ((TNat), "Exp_Date");((TString), "Image");
+                        ((TAddress), "TPRequestor");((TNat),  "LockerStatus");
+                        ((TNat), "param_temp");(TNat, "LockerStatus")    ],
+                  [(TUnit, "dl_constructor",[((TAddress), "param_bank_agent");]); 
+                  (TUnit, "begin_review",[]);
+                  (TUnit, "rejec_application", []);
+                  (TUnit, "upload_documents", [((TString), "param_locker_id"); ((TString), "param_image")]);
+                  (TUnit, "share_with_tp", [((TAddress), "param_tp"); ((TNat), "param_exp_date")]);
+                  (TUnit, "accept_s_request", []);
+                  (TUnit, "reject_s_request", []);
+                  (TUnit, "request_l_access", []);
+                  (TUnit, "release_l_access", []);
+                  (TUnit, "revoke_access", []);
+                  (TUnit, "terminate", [])
+                  ]) CT.empty);;
+
+
+
+(*place your code here :) *)
+
+let ctMark =
+  (CT.add "Marketplace" ([((TAddress), "InstanceOwner");((TString), "Description");
+                        ((TNat), "AskingPrice"); ((TAddress), "InstanceBuyer");
+                        ((TNat), "OfferPrice");
+                        ((TString), "param_description");((TNat), "param_price");
+                        ((TNat), "param_offer")],
+                  [(TUnit, "marketplace_constructor",[((TString), "param_description"); ((TAddress), "OfferPrice")]); 
+                  (TUnit, "make_offer",[(TNat), "param_offer"]);
+                  (TNat, "accept", []);
+                  (TUnit, "reject", []);
+                  ]) CT.empty);;
+
+let gammaMark = (Gamma.add "InstanceOwner" TAddress
+(Gamma.add "CurrentState" TState
+(Gamma.add "ItemAvailable" TState
+(Gamma.add "OfferPlaced" TState
+(Gamma.add "Accept" TState
+(Gamma.add "Description" TString
+(Gamma.add "AskingPrice" TNat
+(Gamma.add "InstanceBuyer" TAddress
+(Gamma.add "OfferPrice" TNat
+(Gamma.add "sender" TAddress
+(Gamma.add "param_description" TString
+(Gamma.add "param_price" TNat
+(Gamma.add "param_offer" TNat
+(Gamma.add "Mark" (TContract("Mark")) 
+(Gamma.add "aMark" TAddress Gamma.empty)))))))))))))));;
+
+(*-----------------------------------------------------------------------------MARKETPLACE-----------------------------------------------------------------------------*)
+let instanceOwner : term = TmVar("InstanceOwner");;
+let description : term = TmVar("Description");;
+let askingPrice : term = TmVar("AskingPrice");;
+let instanceBuyer : term = TmVar("InstanceBuyer");;
+let offerPrice : term = TmVar("OfferPrice");;
+let sender : term = TmGetParam("sender");;
+let param_description : params = (TString, "param_description");;
+let param_description_val : term = TmGetParam("param_description");;
+let param_price : params = (TNat,"param_price");;
+let param_price_val : term = TmGetParam("param_price");;
+let marketplace_constructor : construtor_ = ([param_description;param_price], TmSeq(TmSeq(TmAssign("CurrentState", TmGetState("ItemAvailable")) , TmSeq(TmAssign("InstanceOwner",sender), 
+TmSeq(TmAssign("AskingPrice", param_price_val), TmAssign("Description", param_description_val)))), TmReturn(TmValue(VUnit)) ) );;
+
+let param_offer : params = (TNat, "param_offer");;
+let param_offer_val : term = TmGetParam("param_offer");;
+let make_offer : func = {requires = And(Equals(TmGetParam("sender"), TmVar("InstanceBuyer")),And(Equals(TmGetState("ItemAvailable"), TmVar("CurrentState")),
+ Greater(TmGetParam("param_offer"), TmVar("AskingPrice")))); return_type = TUnit; func_name = "make_offer"; params = [param_offer]; 
+                      body = TmSeq( TmSeq( TmIf(Equals(param_offer_val, TmValue(VCons(0))), TmRevert, TmReturn(TmValue(VUnit))),
+                      TmSeq( TmIf(Equals(sender, instanceOwner), TmRevert, TmReturn(TmValue(VUnit))), TmSeq( TmAssign("InstanceBuyer", sender), 
+                      TmSeq( TmAssign("OfferPrice", param_offer_val), TmAssign("CurrentState", TmGetState("OfferPlaced")) ) ))), TmReturn(TmValue(VUnit)))};;
+                
+let param_offer_r : params = (TNat, "param_offer_r");;
+let param_offer_r_val : term = TmGetParam("param_offer");;               
+let reject : func = {requires = And(Equals(TmGetParam("sender"), TmVar("InstanceOwner")),
+                                And(Equals(TmGetState("OfferPlaced"), TmVar("CurrentState")),Not(Equals(param_offer_r_val, TmValue(VCons(0)))))); 
+return_type = TUnit; func_name = "reject"; params = [param_offer_r]; body = TmSeq(TmAssign("InstanceBuyer", TmValue(VAddress("sender"))) , 
+TmSeq( TmAssign("CurrentState", TmGetState("ItemAvailable")),TmReturn(TmValue(VUnit))))   };;
+
+let param_offer_a : params = (TNat, "param_offer_a");;
+let param_offer_a_val : term = TmGetParam("param_offer");;
+let accept : func = { requires = And(Equals(TmGetState("OfferPlaced"), TmVar("CurrentState")),(Equals( sender, instanceOwner)));
+                      return_type = TUnit; func_name = "accept"; params = [param_offer_a]; body = TmSeq(TmIf((Equals(param_offer_a_val, TmValue(VCons(0)))), TmRevert, 
+                                                        TmReturn(TmValue(VUnit))), TmSeq(TmAssign("CurrentState", TmGetState("Accept")),TmReturn(TmValue(VUnit))))};;   
 let contractMark : contract_tc = {
-  vars = [TmVar("InstanceOwner");TmVar("Description");TmVar("AskingPrice");
-          TmVar("InstanceBuyer"); TmVar("OfferPrice");TmVar("sender")];
+  name = "Marketplace";
+  init = ( [], And( Equals(TmVar("CurrentState"), TmGetState("ItemAvailable")), And(Greater( TmVar("AskingPrice"), TmValue(VCons(0))), Greater(TmVar("OfferPrice"), TmVar("AskingPrice")))));
+  invariant = ([],Greater(TmVar("OfferPrice"), TmVar("AskingPrice"))); 
+  behavioral_types = [TmGetState("ItemAvailable"); TmGetState("OfferPlaced"); TmGetState("Accept")];
+  vars = [(TmVar("CurrentState"),TState); (TmVar("InstanceOwner"), TAddress);(TmVar("Description"), TString); (TmVar("AskingPrice"), TNat);
+          (TmVar("InstanceBuyer"), TAddress); (TmVar("OfferPrice"), TNat)];
   cons = marketplace_constructor;
-  funcs = [make_offer; reject; accept]
-}
+  funcs = [make_offer; reject; accept];
+};;
+                
 
-(*typecheck_contract ctMark gammaMark contractMark*)
 
+typecheck_contract ctMark gammaMark contractMark;;
+(* typecheck_contract ctDL gammaDL contractDL; *)
+(*typecheck_contract ctTelemetry gammaTelemetry contractTelemetry;*)
+(*typecheck_contract ctBank gammaBank contractBank;;*)
 

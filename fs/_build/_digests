@@ -1,4 +1,0 @@
-"Rule: ocaml: ml -> cmo & cmi (%=minifs6.0_withTypeChecker )": "\167\235\246\143\156\1419\228\250y\028\140\206\213\170\026"
-"Rule: ocaml: ml & cmi -> cmx & o (%=minifs6.0_withTypeChecker )": "!0\196I\t\241\250\236\1466\001\021\202\186Sk"
-"Resource: /home/mxlinux/Desktop/thesis/thesis/fs/minifs6.0_withTypeChecker.ml": "\239\181o56\030\197\153ieU\154(\015\197\234"
-"Rule: ocaml dependencies ml (%=minifs6.0_withTypeChecker )": "\190\231\"=P\205\017?\225C\007\249\206\217\127\215"

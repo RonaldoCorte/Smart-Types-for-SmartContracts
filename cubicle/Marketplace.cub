@@ -22,7 +22,7 @@ requires{i = Buyer && MarketplaceState = ItemAvailable && BuyerBalance >= Random
 }
 
 transition accept(i)
-requires{i = Owner && MarketplaceState = OfferPlaced && Offer > 0 && Offer < BuyerBalance && IsSold = False}
+requires{i = Owner && MarketplaceState = OfferPlaced && IsSold = False}
 {
     OwnerBalance := OwnerBalance + Offer;
     BuyerBalance := BuyerBalance - Offer;
@@ -36,7 +36,6 @@ requires{i = Owner && MarketplaceState = OfferPlaced}
     MarketplaceState := ItemAvailable;
     IsSold := False;
 }
-
 
 
 

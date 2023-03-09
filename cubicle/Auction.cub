@@ -1,0 +1,28 @@
+var HBidder : proc
+var HBid : int
+var Ended : bool
+var Owner : proc
+array PR[proc] : int
+array Out [ proc ] : int
+array In [ proc ] : int
+var Old_HBid : int
+var Value : int
+
+init (i) { Ended = False && HBid = 0 
+&& PR[ i ] = 0 && In[ i ] = 0 && Out[ i ] = 0
+&& Old_HBid = 0 }
+
+unsafe (i) { Ended = True && i <> HBidder && PR[ i ] = 0
+&& Out[ i ] < In[ i ] }
+
+transition bid (i)
+requires{ Ended = True && i <> HBidder && PR[ i ] = 0
+&& Out[ i ] < In[ i ] }
+{
+HBid := Value ;
+HBidder := i ;
+PR[i] := HBid ;
+Old_HBid := HBid ;
+In[ i ] := In [ i ] + Value ;
+}
+
