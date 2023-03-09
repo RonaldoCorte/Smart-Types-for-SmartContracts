@@ -24,7 +24,7 @@ you simply need to execute the following commands "ocamlopt -c types.ml", "ocaml
   
   ## Examples
   In all of these files you the following examples of use:
-  - Bank example
+  - Bank
   - [Simple Marketplace](https://github.com/Azure-Samples/blockchain/tree/master/blockchain-workbench/application-and-smart-contract-samples/simple-marketplace)
   - [Digital Locker](https://github.com/Azure-Samples/blockchain/tree/master/blockchain-workbench/application-and-smart-contract-samples/digital-locker)
   - [Telemetry](https://github.com/Azure-Samples/blockchain/tree/master/blockchain-workbench/application-and-smart-contract-samples/refrigerated-transportation)
